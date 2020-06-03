@@ -171,12 +171,14 @@ namespace Microsoft.Azure.WebJobs.EventHubs
                     PartitionContext = context
                 };
 
+                var functionExceptionOccurred = false;
+
                 TriggeredFunctionData input = null;
                 if (_singleDispatch)
                 {
                     // Single dispatch
                     int eventCount = triggerInput.Events.Length;
-                    List<Task> invocationTasks = new List<Task>();
+                    List<Task<FunctionResult>> invocationTasks = new List<Task<FunctionResult>>();
                     for (int i = 0; i < eventCount; i++)
                     {
                         if (_cts.IsCancellationRequested)
@@ -191,7 +193,7 @@ namespace Microsoft.Azure.WebJobs.EventHubs
                             TriggerDetails = eventHubTriggerInput.GetTriggerDetails(context)
                         };
 
-                        Task task = TryExecuteWithLoggingAsync(input, triggerInput.Events[i]);
+                        Task<FunctionResult> task = TryExecuteWithLoggingAsync(input, triggerInput.Events[i]);
                         invocationTasks.Add(task);
                     }
 
@@ -199,6 +201,17 @@ namespace Microsoft.Azure.WebJobs.EventHubs
                     if (invocationTasks.Count > 0)
                     {
                         await Task.WhenAll(invocationTasks);
+                    }
+
+                    var failedTasks = invocationTasks.Where(x => x.Exception != null).ToList();
+                    if (failedTasks.Any())
+                    {
+                        foreach (var task in failedTasks)
+                        {
+                            _logger.LogInformation(task.Exception, "Task failed while trying to process single message/event");
+                        }
+
+                        functionExceptionOccurred = true;
                     }
                 }
                 else
@@ -212,7 +225,12 @@ namespace Microsoft.Azure.WebJobs.EventHubs
 
                     using (_logger.BeginScope(GetLinksScope(triggerInput.Events)))
                     {
-                        await _executor.TryExecuteAsync(input, _cts.Token);
+                        var functionResult = await _executor.TryExecuteAsync(input, _cts.Token);
+                        if (functionResult.Exception != null) 
+                        {
+                            _logger.LogInformation(functionResult.Exception, $"Task failed while trying to process {triggerInput.Events.Length} messages/events");
+                            functionExceptionOccurred = true;
+                        }
                     }
                 }
 
@@ -233,15 +251,19 @@ namespace Microsoft.Azure.WebJobs.EventHubs
                 // code, and capture/log/persist failed events, since they won't be retried.
                 if (hasEvents)
                 {
-                    await CheckpointAsync(context);
+                    // Don't progress checkpoint if it's a user-code function (refactor to a setting later)
+                    if (functionExceptionOccurred == false)
+                    {
+                        await CheckpointAsync(context);
+                    }
                 }
             }
 
-            private async Task TryExecuteWithLoggingAsync(TriggeredFunctionData input, EventData message)
+            private async Task<FunctionResult> TryExecuteWithLoggingAsync(TriggeredFunctionData input, EventData message)
             {
                 using (_logger.BeginScope(GetLinksScope(message)))
                 {
-                    await _executor.TryExecuteAsync(input, _cts.Token);
+                    return await _executor.TryExecuteAsync(input, _cts.Token);
                 }
             }
 
