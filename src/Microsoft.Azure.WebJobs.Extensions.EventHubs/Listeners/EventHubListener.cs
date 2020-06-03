@@ -208,7 +208,7 @@ namespace Microsoft.Azure.WebJobs.EventHubs
                     {
                         foreach (var task in failedTasks)
                         {
-                            _logger.LogError(task.Exception, "Task failed while trying to process single message/event");
+                            _logger.LogInformation(task.Exception, "Task failed while trying to process single message/event");
                         }
 
                         functionExceptionOccurred = true;
@@ -228,7 +228,7 @@ namespace Microsoft.Azure.WebJobs.EventHubs
                         var functionResult = await _executor.TryExecuteAsync(input, _cts.Token);
                         if (functionResult.Exception != null) 
                         {
-                            _logger.LogError(functionResult.Exception, $"Task failed while trying to process {triggerInput.Events.Length} messages/events");
+                            _logger.LogInformation(functionResult.Exception, $"Task failed while trying to process {triggerInput.Events.Length} messages/events");
                             functionExceptionOccurred = true;
                         }
                     }
